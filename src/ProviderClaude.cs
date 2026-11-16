@@ -29,12 +29,39 @@ namespace AIMeter
         private DateTime apiFetchedAt = DateTime.MinValue;
         private bool adminKeyRefused;
 
-        private static string PlanFile { get { return Path.Combine(Settings.Folder, "claude-usage.json"); } }
-        private static string RawFile { get { return Path.Combine(Settings.Folder, "claude-usage-raw.json"); } }
+        /// <summary>The CLAUDE_CONFIG_DIR of a further account (~\.claude-name); null for the main ~\.claude account.</summary>
+        private readonly string configDir;
+        private readonly string id;
 
-        public ClaudeProvider(Settings s) { S = s; LoadPersisted(); }
+        private string PlanFile { get { return Path.Combine(Settings.Folder, "claude-usage" + FileSuffix + ".json"); } }
+        private string RawFile { get { return Path.Combine(Settings.Folder, "claude-usage-raw" + FileSuffix + ".json"); } }
+        private string FileSuffix { get { return configDir == null ? "" : id.Substring("claude".Length); } }
 
-        public override string Id { get { return "claude"; } }
+        public ClaudeProvider(Settings s) : this(s, null) { }
+
+        public ClaudeProvider(Settings s, string configDir)
+        {
+            S = s;
+            this.configDir = configDir;
+            id = configDir == null ? "claude" : "claude-" + Path.GetFileName(configDir).Substring(".claude-".Length).ToLowerInvariant();
+            LoadPersisted();
+        }
+
+        public override string Id { get { return id; } }
+
+        /// <summary>
+        /// Further accounts: every ~\.claude-name folder that holds a sign-in, each used with CLAUDE_CONFIG_DIR
+        /// (for example a "claude-dad" shell function). They show as their own cards beside the main account.
+        /// </summary>
+        public static IEnumerable<string> ExtraConfigDirs()
+        {
+            foreach (var d in Probe.SafeDirs(Probe.Home))
+            {
+                string name = Path.GetFileName(d);
+                if (name.Length > ".claude-".Length && name.StartsWith(".claude-", StringComparison.OrdinalIgnoreCase) && File.Exists(Path.Combine(d, ".credentials.json")))
+                    yield return d;
+            }
+        }
 
         /// <summary>Whether Claude Code or the Claude app is installed on this PC.</summary>
         public static bool Detected()
@@ -74,8 +101,9 @@ namespace AIMeter
 
         public override ProviderState Collect(Probe p)
         {
-            var st = new ProviderState { Id = "claude", Name = "Claude", CanSignIn = true };
+            var st = new ProviderState { Id = id, Name = configDir == null ? "Claude" : "Claude (" + id.Substring("claude-".Length) + ")", CanSignIn = configDir == null };
             bool app = false;
+            if (configDir == null)
             foreach (var kv in p.Procs)
             {
                 if (kv.Value != "claude.exe") continue;
@@ -84,7 +112,7 @@ namespace AIMeter
             if (app && S.ClaudeShowChat)
                 st.Sessions.Add(new Session { Kind = "Chat", Title = "Claude app open", Status = "app" });
             if (S.ClaudeShowCode) st.Sessions.AddRange(CodeSessions(p));
-            if (S.ClaudeShowCowork) st.Sessions.AddRange(CoworkSessions(p));
+            if (S.ClaudeShowCowork && configDir == null) st.Sessions.AddRange(CoworkSessions(p));
             st.Running = app || st.Sessions.Count > 0;
             Limits(p, st);
             return st;
@@ -100,8 +128,8 @@ namespace AIMeter
         private IEnumerable<Session> CodeSessions(Probe p)
         {
             var meta = DesktopSessionMeta(p);
-            var folders = new List<KeyValuePair<string, bool>> { new KeyValuePair<string, bool>(Path.Combine(Probe.Home, @".claude\sessions"), false) };
-            if (p.WslUp) folders.Add(new KeyValuePair<string, bool>(p.WslHome + @"\.claude\sessions", true));
+            var folders = new List<KeyValuePair<string, bool>> { new KeyValuePair<string, bool>(Path.Combine(configDir ?? Path.Combine(Probe.Home, ".claude"), "sessions"), false) };
+            if (p.WslUp && configDir == null) folders.Add(new KeyValuePair<string, bool>(p.WslHome + @"\.claude\sessions", true));
 
             var list = new List<Session>();
             HashSet<uint> wslPids = null;
@@ -197,7 +225,7 @@ namespace AIMeter
             string creds = CredentialsPath(p);
             double interval = p.SavingPower ? 15 : 5;
 
-            if (S.ClaudeLiveUsage && p.AllowNetwork && creds != null && (DateTime.Now - fetchedAt).TotalMinutes >= interval && NetworkBackoff.Ready("claude"))
+            if (S.ClaudeLiveUsage && p.AllowNetwork && creds != null && (DateTime.Now - fetchedAt).TotalMinutes >= interval && NetworkBackoff.Ready(id))
             {
                 fetchedAt = DateTime.Now;
                 var fresh = Fetch(creds);
@@ -211,12 +239,12 @@ namespace AIMeter
             }
             st.Plan = plan;
 
-            Usage fallback = AppCachedUsage(p);
+            Usage fallback = configDir == null ? AppCachedUsage(p) : null;   // The app's cache belongs to the main account.
             st.Usage = live != null && (fallback == null || live.At >= fallback.At) ? live : fallback;
             if (st.Usage == live && live != null && (DateTime.Now - live.At).TotalMinutes > interval + 2)
                 st.Usage = live.AsCache();
 
-            ApiCredits(p, st);
+            if (configDir == null) ApiCredits(p, st);   // The Admin key belongs to the main account's organisation.
             if (!S.ClaudeLiveUsage) return;
             if (creds == null && !p.WslUp && wslHasClaude == true)
                 st.Notice = L.T("WSL is off: limits from the last update");
@@ -371,7 +399,7 @@ namespace AIMeter
 
         private string CredentialsPath(Probe p)
         {
-            string win = Path.Combine(Probe.Home, @".claude\.credentials.json");
+            string win = Path.Combine(configDir ?? Path.Combine(Probe.Home, ".claude"), ".credentials.json");
             if (File.Exists(win)) return win;
             if (p.WslUp)
             {
@@ -414,7 +442,8 @@ namespace AIMeter
                     var usage = Parse(Json.Parse(body));
                     if (usage != null)
                     {
-                        string home = Path.GetDirectoryName(Path.GetDirectoryName(credsPath));
+                        // The main account's file sits beside ~\.claude; a CLAUDE_CONFIG_DIR keeps it inside.
+                        string home = configDir ?? Path.GetDirectoryName(Path.GetDirectoryName(credsPath));
                         var account = Json.Obj(Json.ParseFile(Path.Combine(home, ".claude.json")), "oauthAccount");
                         string accountId = Json.Str(account, "accountUuid"), organisationId = Json.Str(account, "organizationUuid");
                         // Profile IDs survive token renewal. Without them, isolate this credential instead.
@@ -425,7 +454,7 @@ namespace AIMeter
             }
             catch (WebException e)
             {
-                NetworkBackoff.Note("claude", e);
+                NetworkBackoff.Note(id, e);
                 var hr = e.Response as HttpWebResponse;
                 if (hr != null && (hr.StatusCode == HttpStatusCode.Unauthorized || hr.StatusCode == HttpStatusCode.Forbidden))
                     needsLogin = true;
@@ -530,7 +559,7 @@ namespace AIMeter
             else
             {
                 string exe = CliPath();
-                if (exe != null) Probe.Run(exe, "auth status", 40000, null);
+                if (exe != null) Probe.Run(exe, "auth status", 40000, null, configDir);
             }
         }
 

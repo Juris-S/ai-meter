@@ -106,6 +106,7 @@ namespace AIMeter
         internal static string ProviderName(string id)
         {
             if (id == "claude") return "Claude";
+            if (Ui.BrandId(id) == "claude") return "Claude (" + id.Substring("claude-".Length) + ")";
             if (id == "openai") return "ChatGPT";
             if (id == "copilot") return "GitHub Copilot";
             var definition = Definitions.Get(id);
