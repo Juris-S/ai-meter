@@ -17,9 +17,18 @@ namespace AIMeter
             test("Daily resets follow the zone's daylight-saving rules", ZoneResets);
             test("list_free_models reports price status, pool, caps, rates and headroom", FreeModelLimits);
             test("Catalogue-only services stay off the surfaces and off by default, but reach MCP", CatalogueOnlyServices);
+            test("A further Claude account keeps its own id, files and card brand", ExtraClaudeAccount);
         }
 
         private static readonly BindingFlags Private = BindingFlags.Instance | BindingFlags.Static | BindingFlags.NonPublic;
+
+        private static void ExtraClaudeAccount()
+        {
+            var dad = new ClaudeProvider(new Settings(), Path.Combine(Probe.Home, ".claude-Dad"));
+            Assert(dad.Id == "claude-dad", "The account id was " + dad.Id);
+            Assert(new ClaudeProvider(new Settings()).Id == "claude", "The main account lost its id.");
+            Assert(Ui.BrandId(dad.Id) == "claude" && Ui.BrandId("claude") == "claude" && Ui.BrandId("openai") == "openai", "Brand ids were mapped wrongly.");
+        }
 
         private static void CatalogueOnlyServices()
         {

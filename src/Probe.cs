@@ -252,7 +252,7 @@ namespace AIMeter
         }
 
         /// <summary>Runs a program without a window and returns its output (null if it fails or times out).</summary>
-        public static string Run(string exe, string args, int timeoutMs, Encoding outputEncoding)
+        public static string Run(string exe, string args, int timeoutMs, Encoding outputEncoding, string claudeConfigDir = null)
         {
             try
             {
@@ -262,6 +262,7 @@ namespace AIMeter
                     RedirectStandardOutput = true, RedirectStandardError = true,
                 };
                 if (outputEncoding != null) psi.StandardOutputEncoding = outputEncoding;
+                if (claudeConfigDir != null) psi.EnvironmentVariables["CLAUDE_CONFIG_DIR"] = claudeConfigDir;
                 using (var p = Process.Start(psi))
                 {
                     var outTask = p.StandardOutput.ReadToEndAsync();
@@ -300,6 +301,7 @@ namespace AIMeter
             probe = new Probe(settings);
             providers = new List<Provider> { new ClaudeProvider(settings), new CodexProvider(settings), new CopilotProvider(settings), new AntigravityProvider(settings) };
             foreach (var d in Definitions.All) providers.Add(new DefinedProvider(d));
+            foreach (var dir in ClaudeProvider.ExtraConfigDirs()) providers.Insert(1, new ClaudeProvider(settings, dir));
             providers.Add(new LocalProvider(settings));
         }
 

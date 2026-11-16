@@ -25,7 +25,34 @@ namespace AIMeter
         /// </summary>
         public static FrameworkElement Logo(string id, double size) { return Logo(id, size, Theme.Dark); }
 
+        /// <summary>A further Claude account ("claude-dad") wears Claude's logo and colour.</summary>
+        internal static string BrandId(string id) { return id != null && id.StartsWith("claude-", StringComparison.Ordinal) ? "claude" : id; }
+
+        private static readonly string[] BadgeColours = { "#E5484D", "#3E63DD", "#30A46C", "#F76B15", "#8E4EC6", "#12A594", "#D6409F", "#978365" };
+
         public static FrameworkElement Logo(string id, double size, bool dark)
+        {
+            string brand = BrandId(id);
+            var logo = BrandLogo(brand, size, dark);
+            if (brand == id) return logo;
+            // A further account of the same service: a corner badge with its initial, in a colour taken from its id.
+            string name = id.Substring(brand.Length + 1);
+            int sum = 0;
+            foreach (char c in name) sum += c;
+            double badge = Math.Max(10, size * 0.65);
+            var dot = new Border
+            {
+                Width = badge, Height = badge, CornerRadius = new CornerRadius(badge * 0.22), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom,
+                Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(BadgeColours[sum % BadgeColours.Length])),
+                Child = new TextBlock { Text = name.Substring(0, 1).ToUpperInvariant(), Foreground = Brushes.White, FontWeight = FontWeights.Bold, FontSize = badge * 0.72, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center },
+            };
+            var host = new Grid { Width = size, Height = size, VerticalAlignment = VerticalAlignment.Center };
+            host.Children.Add(logo);
+            host.Children.Add(dot);
+            return host;
+        }
+
+        private static FrameworkElement BrandLogo(string id, double size, bool dark)
         {
             string key = id + (dark ? ":dark" : ":light");
             BitmapSource bmp;
@@ -217,6 +244,6 @@ namespace AIMeter
             return null;
         }
 
-        public static string BrandBrush(string id) { return id == "openai" ? "OpenAI" : id == "copilot" ? "Copilot" : id == "claude" ? "Claude" : id == "antigravity" ? "Antigravity" : "Brand." + id; }
+        public static string BrandBrush(string id) { id = BrandId(id); return id == "openai" ? "OpenAI" : id == "copilot" ? "Copilot" : id == "claude" ? "Claude" : id == "antigravity" ? "Antigravity" : "Brand." + id; }
     }
 }
